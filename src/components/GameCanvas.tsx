@@ -1,62 +1,112 @@
 "use client";
-
 import { useEffect, useRef, useState } from "react";
 import { generateMaze } from "@/game/maze/generate";
 import { draw } from "@/game/render/draw";
-import { canMove } from "@/game/movement/canMove";
-import { Maze, Player, Dir } from "@/game/types";
-
-const WIDTH = 800;
-const HEIGHT = 600;
+import { moveWithCollision } from "@/game/movement/canMove";
+import { Maze, Player } from "@/game/types";
+import { CELL_SIZE, PLAYER_SPEED } from "@/game/config";
 
 export default function GameCanvas() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [maze] = useState<Maze>(() => generateMaze(30, 30));
-  const [player, setPlayer] = useState<Player>({ x: 0, y: 0 });
+  const keys = useRef({ up: false, down: false, left: false, right: false });
+
+  const [maze] = useState<Maze>(() => generateMaze(25, 25));
+  const playerRef = useRef<Player>({
+  x: (1.5) * CELL_SIZE,
+  y: (1.5) * CELL_SIZE,
+});
+
+useEffect(() => {
+  const canvas = canvasRef.current;
+  const ctx = canvas?.getContext("2d");
+  if (!ctx) return;
+
+  draw(ctx, maze, playerRef.current);
+}, [maze]);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
+    const onDown = (e: KeyboardEvent) => {
+      if (e.key === "ArrowUp" || e.key === "w") keys.current.up = true;
+      if (e.key === "ArrowDown" || e.key === "s") keys.current.down = true;
+      if (e.key === "ArrowLeft" || e.key === "a") keys.current.left = true;
+      if (e.key === "ArrowRight" || e.key === "d") keys.current.right = true;
+    };
+    const onUp = (e: KeyboardEvent) => {
+      if (e.key === "ArrowUp" || e.key === "w") keys.current.up = false;
+      if (e.key === "ArrowDown" || e.key === "s") keys.current.down = false;
+      if (e.key === "ArrowLeft" || e.key === "a") keys.current.left = false;
+      if (e.key === "ArrowRight" || e.key === "d") keys.current.right = false;
+    };
 
-    function loop() {
-      draw(ctx, maze, player, WIDTH, HEIGHT);
-      requestAnimationFrame(loop);
-    }
-    loop();
-  }, [maze, player]);
+    window.addEventListener("keydown", onDown);
+    window.addEventListener("keyup", onUp);
+    return () => {
+      window.removeEventListener("keydown", onDown);
+      window.removeEventListener("keyup", onUp);
+    };
+  }, []);
 
   useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      const map: Record<string, Dir> = {
-        ArrowUp: "N",
-        ArrowDown: "S",
-        ArrowLeft: "W",
-        ArrowRight: "E",
-        w: "N",
-        s: "S",
-        a: "W",
-        d: "E",
-      };
+  const canvas = canvasRef.current;
+  if (!canvas) return;
 
-      const dir = map[e.key];
-      if (!dir) return;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
 
-      setPlayer((p) => {
-        if (!canMove(maze, p.x, p.y, dir)) return p;
-        const n = { ...p };
-        if (dir === "N") n.y--;
-        if (dir === "S") n.y++;
-        if (dir === "E") n.x++;
-        if (dir === "W") n.x--;
-        return n;
-      });
+  let lastTime = performance.now();
+  let rafId: number;
+
+  const loop = (now: number) => {
+    // delta time (seconds)
+    const dt = Math.min(0.033, (now - lastTime) / 1000);
+    lastTime = now;
+
+    // --- INPUT ---
+    let vx = 0;
+    let vy = 0;
+
+    if (keys.current.left) vx -= 1;
+    if (keys.current.right) vx += 1;
+    if (keys.current.up) vy -= 1;
+    if (keys.current.down) vy += 1;
+
+    // normalize (prevents faster diagonal movement)
+    const length = Math.hypot(vx, vy);
+    if (length > 0) {
+      vx /= length;
+      vy /= length;
     }
 
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [maze]);
+    // --- MOVEMENT ---
+    const dx = vx * PLAYER_SPEED * dt;
+    const dy = vy * PLAYER_SPEED * dt;
 
-  return <canvas ref={canvasRef} width={WIDTH} height={HEIGHT} />;
+    const currentPlayer = playerRef.current;
+    const nextPlayer = moveWithCollision(maze, currentPlayer, dx, dy);
+    playerRef.current = nextPlayer;
+
+    // --- RENDER ---
+    draw(ctx, maze, nextPlayer);
+
+    rafId = requestAnimationFrame(loop);
+  };
+
+  // start loop
+  rafId = requestAnimationFrame(loop);
+
+  // cleanup
+  return () => {
+    cancelAnimationFrame(rafId);
+  };
+}, [maze]);
+
+
+  return (
+    <canvas
+      ref={canvasRef}
+      width={1200}
+      height={700}
+      style={{ display: "block", background: "black" }}
+    />
+  );
 }

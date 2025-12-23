@@ -1,54 +1,50 @@
 import { Maze, Player } from "@/game/types";
-import { TILE_SIZE, WALL_COLOR, PLAYER_COLOR } from "@/game/config";
+import { CELL_SIZE, WALL_THICKNESS, PLAYER_RADIUS } from "@/game/config";
 
 export function draw(
   ctx: CanvasRenderingContext2D,
   maze: Maze,
-  player: Player,
-  screenW: number,
-  screenH: number
+  player: Player
 ) {
-  ctx.clearRect(0, 0, screenW, screenH);
+  const { width, height } = ctx.canvas;
 
-  const cx = screenW / 2;
-  const cy = screenH / 2;
+  // camera keeps player centered
+  const camX = width / 2 - player.x;
+  const camY = height / 2 - player.y;
 
-  const playerWorldX = player.x * TILE_SIZE;
-  const playerWorldY = player.y * TILE_SIZE;
+  // background
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = "black";
+  ctx.fillRect(0, 0, width, height);
 
-  ctx.strokeStyle = WALL_COLOR;
-  ctx.lineWidth = 2;
+  // walls
+  ctx.fillStyle = "#00ff00";
 
-  for (const cell of maze.cells) {
-    const wx = cell.x * TILE_SIZE;
-    const wy = cell.y * TILE_SIZE;
+  for (const c of maze.cells) {
+    const x0 = c.x * CELL_SIZE + camX;
+    const y0 = c.y * CELL_SIZE + camY;
 
-    // camera offset: player stays centered
-    const sx = wx - playerWorldX + cx;
-    const sy = wy - playerWorldY + cy;
-
-    if (cell.walls.N) line(ctx, sx, sy, sx + TILE_SIZE, sy);
-    if (cell.walls.E) line(ctx, sx + TILE_SIZE, sy, sx + TILE_SIZE, sy + TILE_SIZE);
-    if (cell.walls.S) line(ctx, sx, sy + TILE_SIZE, sx + TILE_SIZE, sy + TILE_SIZE);
-    if (cell.walls.W) line(ctx, sx, sy, sx, sy + TILE_SIZE);
+    if (c.walls.N) ctx.fillRect(x0, y0, CELL_SIZE, WALL_THICKNESS);
+    if (c.walls.W) ctx.fillRect(x0, y0, WALL_THICKNESS, CELL_SIZE);
+    if (c.walls.E)
+      ctx.fillRect(
+        x0 + CELL_SIZE - WALL_THICKNESS,
+        y0,
+        WALL_THICKNESS,
+        CELL_SIZE
+      );
+    if (c.walls.S)
+      ctx.fillRect(
+        x0,
+        y0 + CELL_SIZE - WALL_THICKNESS,
+        CELL_SIZE,
+        WALL_THICKNESS
+      );
   }
 
   // player (always centered)
-  ctx.fillStyle = PLAYER_COLOR;
   ctx.beginPath();
-  ctx.arc(cx, cy, TILE_SIZE / 4, 0, Math.PI * 2);
+  ctx.fillStyle = "red";
+  ctx.arc(width / 2, height / 2, PLAYER_RADIUS, 0, Math.PI * 2);
   ctx.fill();
-}
-
-function line(
-  ctx: CanvasRenderingContext2D,
-  x1: number,
-  y1: number,
-  x2: number,
-  y2: number
-) {
-  ctx.beginPath();
-  ctx.moveTo(x1, y1);
-  ctx.lineTo(x2, y2);
-  ctx.stroke();
 }
