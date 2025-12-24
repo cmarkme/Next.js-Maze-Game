@@ -10,10 +10,15 @@
   }
 }
 
+/* IMPORTANT FOR FULLSCREEN CANVAS + MOBILE */
 html,
 body {
+  width: 100%;
+  height: 100%;
   max-width: 100vw;
-  overflow-x: hidden;
+  margin: 0;
+  overflow: hidden;              /* stops page scrolling */
+  overscroll-behavior: none;     /* stops pull-to-refresh bounce */
 }
 
 body {
@@ -33,6 +38,11 @@ body {
 a {
   color: inherit;
   text-decoration: none;
+}
+
+/* IMPORTANT: lets our pointer events control pinch/drag */
+canvas {
+  touch-action: none;
 }
 
 @media (prefers-color-scheme: dark) {

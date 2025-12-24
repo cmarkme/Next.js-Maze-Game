@@ -64,26 +64,50 @@ function getNearbyWallRects(maze: Maze, px: number, py: number): Rect[] {
   return rects;
 }
 
-export function moveWithCollision(maze: Maze, player: Player, dx: number, dy: number): Player {
-  // attempt X then resolve
-  let x = player.x + dx;
-  let y = player.y;
+// GENERAL: used by player AND enemy
+export function moveCircleWithCollision(
+  maze: Maze,
+  x: number,
+  y: number,
+  r: number,
+  dx: number,
+  dy: number
+) {
+  let nx = x + dx;
+  let ny = y;
 
-  let walls = getNearbyWallRects(maze, x, y);
+  let walls = getNearbyWallRects(maze, nx, ny);
   for (const w of walls) {
-    const res = circleRectResolve(x, y, PLAYER_RADIUS, w);
-    x = res.cx;
-    y = res.cy;
+    const res = circleRectResolve(nx, ny, r, w);
+    nx = res.cx;
+    ny = res.cy;
   }
 
-  // attempt Y then resolve
-  y = y + dy;
-  walls = getNearbyWallRects(maze, x, y);
+  ny = ny + dy;
+  walls = getNearbyWallRects(maze, nx, ny);
   for (const w of walls) {
-    const res = circleRectResolve(x, y, PLAYER_RADIUS, w);
-    x = res.cx;
-    y = res.cy;
+    const res = circleRectResolve(nx, ny, r, w);
+    nx = res.cx;
+    ny = res.cy;
   }
 
-  return { x, y };
+  return { x: nx, y: ny };
 }
+
+export function moveWithCollision(
+  maze: Maze,
+  player: Player,
+  dx: number,
+  dy: number
+): Player {
+  const res = moveCircleWithCollision(
+    maze,
+    player.x,
+    player.y,
+    PLAYER_RADIUS,
+    dx,
+    dy
+  );
+  return { x: res.x, y: res.y };
+}
+

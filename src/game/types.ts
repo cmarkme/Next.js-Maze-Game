@@ -17,3 +17,11 @@ export type Player = {
   x: number;
   y: number;
 };
+
+export type Enemy = {
+  x: number; // world coords (same as player)
+  y: number;
+  r: number; // radius in world units
+  speed: number; // world units per second
+};
+
