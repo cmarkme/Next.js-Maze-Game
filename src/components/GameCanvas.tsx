@@ -6,12 +6,21 @@ import { draw } from "@/game/render/draw";
 import { moveWithCollision, moveCircleWithCollision } from "@/game/movement/canMove";
 import { Maze, Player, Enemy } from "@/game/types";
 import { CELL_SIZE, PLAYER_SPEED, PLAYER_RADIUS } from "@/game/config";
+import {
+  buildFlowField,
+  worldToCell,
+  nextCellFromFlow,
+  FlowField,
+} from "@/game/ai/flowField";
+
 
 
 
 type Keys = { up: boolean; down: boolean; left: boolean; right: boolean };
 
 export default function GameCanvas() {
+  const flowFieldRef = useRef<FlowField | null>(null);
+  const lastPlayerCellRef = useRef<{ cx: number; cy: number } | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   // keyboard support stays (desktop)
@@ -201,35 +210,50 @@ const enemyRef = useRef<Enemy>({
         const dy = vy * PLAYER_SPEED * dt;
         playerRef.current = moveWithCollision(maze, playerRef.current, dx, dy);
       }
-      // ENEMY CHASE + COLLISION (world space)
-      {
-        const e = enemyRef.current;
-        const p = playerRef.current;
+     
+{
+  const e = enemyRef.current;
+  const p = playerRef.current;
 
-        const ex = p.x - e.x;
-        const ey = p.y - e.y;
-        const d = Math.hypot(ex, ey);
+  // player cell
+  const pc = worldToCell(p.x, p.y);
 
-        if (d > 0.0001) {
-          const dirx = ex / d;
-          const diry = ey / d;
+  // rebuild flow field ONLY if player changed cell
+  const last = lastPlayerCellRef.current;
+  if (!last || last.cx !== pc.cx || last.cy !== pc.cy) {
+    flowFieldRef.current = buildFlowField(maze, pc.cx, pc.cy);
+    lastPlayerCellRef.current = pc;
+  }
 
-          const edx = dirx * e.speed * dt;
-          const edy = diry * e.speed * dt;
+  const field = flowFieldRef.current;
+  if (!field) return;
 
-          const next = moveCircleWithCollision(maze, e.x, e.y, e.r, edx, edy);
-          e.x = next.x;
-          e.y = next.y;
-        }
+  // enemy cell
+  const ec = worldToCell(e.x, e.y);
 
-        // CONTACT (simple hit)
-        const hit = Math.hypot(p.x - e.x, p.y - e.y) <= (PLAYER_RADIUS + e.r);
-        if (hit) {
-          // simplest "interaction" for now: shove enemy away
-          e.x = p.x + 6;
-          e.y = p.y + 6;
-        }
-      }
+  // get next cell toward player
+  const nextCell = nextCellFromFlow(maze, field, ec.cx, ec.cy);
+
+  // If enemy is already in player's cell, target the player directly (so it can touch)
+const sameCell = ec.cx === pc.cx && ec.cy === pc.cy;
+
+  const tx = sameCell ? p.x : (nextCell.cx + 0.5) * CELL_SIZE;
+const ty = sameCell ? p.y : (nextCell.cy + 0.5) * CELL_SIZE;
+
+  const dx = tx - e.x;
+  const dy = ty - e.y;
+  const d = Math.hypot(dx, dy);
+
+  if (d > 0.001) {
+    const vx = (dx / d) * e.speed * dt;
+    const vy = (dy / d) * e.speed * dt;
+
+    const next = moveCircleWithCollision(maze, e.x, e.y, e.r, vx, vy);
+    e.x = next.x;
+    e.y = next.y;
+  }
+}
+
 
       draw(ctx, maze, playerRef.current, enemyRef.current, scaleRef.current, dprRef.current);
 
