@@ -13,7 +13,7 @@ export function draw(
   ctx: CanvasRenderingContext2D,
   maze: Maze,
   player: Player,
-  enemy: Enemy,
+  enemies: Enemy[],
   scale: number,
   dpr: number
 ) {
@@ -74,10 +74,12 @@ export function draw(
   // --------------------------------------------------
   // 5️⃣ DRAW ENEMY (WORLD SPACE)
   // --------------------------------------------------
+  for (const enemy of enemies) {
   ctx.beginPath();
-  ctx.fillStyle = "orange";
   ctx.arc(enemy.x, enemy.y, enemy.r, 0, Math.PI * 2);
+  ctx.fillStyle = "red";
   ctx.fill();
+}
 
   // --------------------------------------------------
   // 6️⃣ DRAW PLAYER (WORLD SPACE)
