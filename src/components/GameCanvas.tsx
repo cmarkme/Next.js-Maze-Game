@@ -1,66 +1,194 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { generateMaze } from "@/game/maze/generate";
 import { draw } from "@/game/render/draw";
-import { moveWithCollision, moveCircleWithCollision } from "@/game/movement/canMove";
-import { Maze, Player, Enemy } from "@/game/types";
-import { CELL_SIZE, PLAYER_SPEED, PLAYER_RADIUS } from "@/game/config";
+import {
+  moveCircleWithCollision,
+  moveWithCollision,
+} from "@/game/movement/canMove";
+import {
+  Core,
+  Enemy,
+  Exit,
+  Maze,
+  Player,
+  ShieldPickup,
+} from "@/game/types";
+import { CELL_SIZE, PLAYER_RADIUS, PLAYER_SPEED } from "@/game/config";
 import {
   buildFlowField,
-  worldToCell,
-  nextCellFromFlow,
   FlowField,
+  nextCellFromFlow,
+  worldToCell,
 } from "@/game/ai/flowField";
+import styles from "./GameCanvas.module.css";
 
-type EnemyState = Enemy & { active: boolean };
 type Keys = { up: boolean; down: boolean; left: boolean; right: boolean };
+type GameStatus = "playing" | "gameover";
 
-// Enemy settings
-const ENEMY_COUNT = 80;
-const ENEMY_SPEED = 180;
+const MAZE_SIZE = 30;
+const MAX_HEALTH = 3;
+const CORE_COUNT = 3;
+const BASE_ENEMY_COUNT = 36;
+const BASE_ENEMY_SPEED = 150;
 const ENEMY_RADIUS = PLAYER_RADIUS;
-
-// how close you must be to "wake" an enemy (world units)
-const AGGRO_RADIUS = CELL_SIZE * 3.0;
-
-// don't spawn enemies too close to player at start
-const SPAWN_MIN_DIST = CELL_SIZE * 4.0;
+const BASE_AGGRO_RADIUS = CELL_SIZE * 2.75;
+const SPAWN_MIN_DIST = CELL_SIZE * 4;
+const DASH_DURATION_MS = 260;
+const DASH_COOLDOWN_MS = 1600;
+const DASH_MULTIPLIER = 2.4;
+const HIT_INVULNERABILITY_MS = 1100;
 
 export default function GameCanvas() {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const flowFieldRef = useRef<FlowField | null>(null);
   const lastPlayerCellRef = useRef<{ cx: number; cy: number } | null>(null);
-
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-
-  // keyboard support stays (desktop)
   const keys = useRef<Keys>({ up: false, down: false, left: false, right: false });
-
-  // pinch/drag state
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const lastPinchDist = useRef<number | null>(null);
-
-  // render state
-  const scaleRef = useRef(1); // pinch zoom changes this
+  const scaleRef = useRef(0.72);
   const dprRef = useRef(1);
 
-  const [maze] = useState<Maze>(() => generateMaze(100, 100));
+  const [maze, setMaze] = useState<Maze>(() => generateMaze(MAZE_SIZE, MAZE_SIZE));
+  const playerRef = useRef<Player>({ x: 1.5 * CELL_SIZE, y: 1.5 * CELL_SIZE });
+  const enemiesRef = useRef<Enemy[]>([]);
+  const coresRef = useRef<Core[]>([]);
+  const exitRef = useRef<Exit | null>(null);
+  const shieldPickupRef = useRef<ShieldPickup | null>(null);
 
-  const playerRef = useRef<Player>({
-    x: 1.5 * CELL_SIZE,
-    y: 1.5 * CELL_SIZE,
-  });
+  const [health, setHealth] = useState(MAX_HEALTH);
+  const healthRef = useRef(MAX_HEALTH);
+  const [coresCollected, setCoresCollected] = useState(0);
+  const coresCollectedRef = useRef(0);
+  const [level, setLevel] = useState(1);
+  const levelRef = useRef(1);
+  const [score, setScore] = useState(0);
+  const scoreRef = useRef(0);
+  const [elapsed, setElapsed] = useState(0);
+  const levelStartRef = useRef(0);
+  const lastTimerUpdateRef = useRef(0);
+  const [shieldActive, setShieldActive] = useState(false);
+  const shieldActiveRef = useRef(false);
+  const [dashReady, setDashReady] = useState(true);
+  const dashReadyRef = useRef(true);
+  const dashUntilRef = useRef(0);
+  const dashReadyAtRef = useRef(0);
+  const invulnerableUntilRef = useRef(0);
+  const [gameStatus, setGameStatus] = useState<GameStatus>("playing");
+  const gameStatusRef = useRef<GameStatus>("playing");
+  const advancingRef = useRef(false);
+  const [message, setMessage] = useState("FIND THE ENERGY CORES");
 
-  // ✅ MULTIPLE ENEMIES live here
-  const enemiesRef = useRef<EnemyState[]>([]);
+  const addScore = useCallback((amount: number) => {
+    scoreRef.current += amount;
+    setScore(scoreRef.current);
+  }, []);
 
-  // ✅ Spawn enemies ONCE
+  const triggerDash = useCallback(() => {
+    const now = performance.now();
+    if (gameStatusRef.current !== "playing" || !dashReadyRef.current) return;
+
+    dashUntilRef.current = now + DASH_DURATION_MS;
+    dashReadyAtRef.current = now + DASH_COOLDOWN_MS;
+    dashReadyRef.current = false;
+    setDashReady(false);
+  }, []);
+
+  const completeLevel = useCallback(() => {
+    if (advancingRef.current) return;
+    advancingRef.current = true;
+
+    const seconds = Math.floor((performance.now() - levelStartRef.current) / 1000);
+    addScore(500 + Math.max(100, 600 - seconds * 10));
+
+    const nextHealth = Math.min(MAX_HEALTH, healthRef.current + 1);
+    healthRef.current = nextHealth;
+    setHealth(nextHealth);
+
+    levelRef.current += 1;
+    setLevel(levelRef.current);
+    setMessage(`LEVEL ${levelRef.current}`);
+    coresCollectedRef.current = 0;
+    setCoresCollected(0);
+    shieldActiveRef.current = false;
+    setShieldActive(false);
+    dashReadyRef.current = true;
+    setDashReady(true);
+    setElapsed(0);
+
+    const size = MAZE_SIZE + Math.min(6, (levelRef.current - 1) * 2);
+    setMaze(generateMaze(size, size));
+  }, [addScore]);
+
+  const restartGame = useCallback(() => {
+    levelRef.current = 1;
+    setLevel(1);
+    scoreRef.current = 0;
+    setScore(0);
+    healthRef.current = MAX_HEALTH;
+    setHealth(MAX_HEALTH);
+    coresCollectedRef.current = 0;
+    setCoresCollected(0);
+    shieldActiveRef.current = false;
+    setShieldActive(false);
+    dashReadyRef.current = true;
+    setDashReady(true);
+    setElapsed(0);
+    gameStatusRef.current = "playing";
+    setGameStatus("playing");
+    setMessage("FIND THE ENERGY CORES");
+    setMaze(generateMaze(MAZE_SIZE, MAZE_SIZE));
+  }, []);
+
+  // Prepare all actors and objectives whenever a new maze is created.
   useEffect(() => {
-    if (enemiesRef.current.length > 0) return;
-    enemiesRef.current = spawnEnemies(maze, playerRef.current, ENEMY_COUNT);
+    const player = { x: 1.5 * CELL_SIZE, y: 1.5 * CELL_SIZE };
+    playerRef.current = player;
+
+    const used = new Set<number>();
+    used.add(maze.width + 1);
+
+    const exitCell = findFarthestCell(maze, 1, 1);
+    used.add(exitCell.cy * maze.width + exitCell.cx);
+    exitRef.current = {
+      x: (exitCell.cx + 0.5) * CELL_SIZE,
+      y: (exitCell.cy + 0.5) * CELL_SIZE,
+      unlocked: false,
+    };
+
+    coresRef.current = spawnCores(maze, player, CORE_COUNT, used);
+    const shieldCell = pickSpawnCell(maze, player, CELL_SIZE * 3, used);
+    used.add(shieldCell.cy * maze.width + shieldCell.cx);
+    shieldPickupRef.current = {
+      x: (shieldCell.cx + 0.5) * CELL_SIZE,
+      y: (shieldCell.cy + 0.5) * CELL_SIZE,
+      collected: false,
+    };
+
+    const enemyCount = Math.min(96, BASE_ENEMY_COUNT + (levelRef.current - 1) * 8);
+    const enemySpeed = BASE_ENEMY_SPEED + (levelRef.current - 1) * 10;
+    enemiesRef.current = spawnEnemies(maze, player, enemyCount, enemySpeed, used);
+
+    coresCollectedRef.current = 0;
+    shieldActiveRef.current = false;
+    invulnerableUntilRef.current = 0;
+    dashUntilRef.current = 0;
+    dashReadyAtRef.current = 0;
+    dashReadyRef.current = true;
+    scaleRef.current = 0.72;
+    flowFieldRef.current = null;
+    lastPlayerCellRef.current = null;
+    advancingRef.current = false;
+    levelStartRef.current = performance.now();
+    lastTimerUpdateRef.current = 0;
+    gameStatusRef.current = "playing";
+
+    const timer = window.setTimeout(() => setMessage(""), 1800);
+    return () => window.clearTimeout(timer);
   }, [maze]);
 
-  // FULLSCREEN CANVAS (and crisp on mobile)
+  // Keep the canvas crisp and full-screen.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -68,14 +196,10 @@ export default function GameCanvas() {
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
       dprRef.current = dpr;
-
       canvas.width = Math.floor(window.innerWidth * dpr);
       canvas.height = Math.floor(window.innerHeight * dpr);
-
       canvas.style.width = "100vw";
       canvas.style.height = "100vh";
-      canvas.style.display = "block";
-      canvas.style.background = "black";
     };
 
     resize();
@@ -83,20 +207,26 @@ export default function GameCanvas() {
     return () => window.removeEventListener("resize", resize);
   }, []);
 
-  // KEYBOARD EVENTS (desktop)
+  // Keyboard movement and dash.
   useEffect(() => {
-    const onDown = (e: KeyboardEvent) => {
-      if (e.key === "ArrowUp" || e.key === "w") keys.current.up = true;
-      if (e.key === "ArrowDown" || e.key === "s") keys.current.down = true;
-      if (e.key === "ArrowLeft" || e.key === "a") keys.current.left = true;
-      if (e.key === "ArrowRight" || e.key === "d") keys.current.right = true;
+    const onDown = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      if (["arrowup", "arrowdown", "arrowleft", "arrowright", " "].includes(key)) {
+        event.preventDefault();
+      }
+      if (key === "arrowup" || key === "w") keys.current.up = true;
+      if (key === "arrowdown" || key === "s") keys.current.down = true;
+      if (key === "arrowleft" || key === "a") keys.current.left = true;
+      if (key === "arrowright" || key === "d") keys.current.right = true;
+      if ((key === "shift" || key === " ") && !event.repeat) triggerDash();
     };
 
-    const onUp = (e: KeyboardEvent) => {
-      if (e.key === "ArrowUp" || e.key === "w") keys.current.up = false;
-      if (e.key === "ArrowDown" || e.key === "s") keys.current.down = false;
-      if (e.key === "ArrowLeft" || e.key === "a") keys.current.left = false;
-      if (e.key === "ArrowRight" || e.key === "d") keys.current.right = false;
+    const onUp = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      if (key === "arrowup" || key === "w") keys.current.up = false;
+      if (key === "arrowdown" || key === "s") keys.current.down = false;
+      if (key === "arrowleft" || key === "a") keys.current.left = false;
+      if (key === "arrowright" || key === "d") keys.current.right = false;
     };
 
     window.addEventListener("keydown", onDown);
@@ -105,68 +235,51 @@ export default function GameCanvas() {
       window.removeEventListener("keydown", onDown);
       window.removeEventListener("keyup", onUp);
     };
-  }, []);
+  }, [triggerDash]);
 
-  // POINTER EVENTS (mobile)
+  // One-finger movement and two-finger zoom for touch screens.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const onPointerDown = (e: PointerEvent) => {
-      e.preventDefault();
-
-      canvas.setPointerCapture(e.pointerId);
-      pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-
-      if (pointers.current.size < 2) {
-        lastPinchDist.current = null;
-      }
+    const onPointerDown = (event: PointerEvent) => {
+      event.preventDefault();
+      canvas.setPointerCapture(event.pointerId);
+      pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      if (pointers.current.size < 2) lastPinchDist.current = null;
     };
 
-    const onPointerMove = (e: PointerEvent) => {
-      if (!pointers.current.has(e.pointerId)) return;
-      e.preventDefault();
+    const onPointerMove = (event: PointerEvent) => {
+      if (!pointers.current.has(event.pointerId) || gameStatusRef.current !== "playing") return;
+      event.preventDefault();
 
-      const prev = pointers.current.get(e.pointerId)!;
-      const nextPt = { x: e.clientX, y: e.clientY };
-      pointers.current.set(e.pointerId, nextPt);
+      const previous = pointers.current.get(event.pointerId)!;
+      const nextPoint = { x: event.clientX, y: event.clientY };
+      pointers.current.set(event.pointerId, nextPoint);
 
-      // 1 finger drag = attempt movement
       if (pointers.current.size === 1) {
-        const dx = nextPt.x - prev.x;
-        const dy = nextPt.y - prev.y;
-
-        const scale = scaleRef.current;
-
-        const worldDx = -dx / scale;
-        const worldDy = -dy / scale;
-
+        const boost = performance.now() < dashUntilRef.current ? DASH_MULTIPLIER : 1;
+        const worldDx = ((nextPoint.x - previous.x) / scaleRef.current) * boost;
+        const worldDy = ((nextPoint.y - previous.y) / scaleRef.current) * boost;
         playerRef.current = moveWithSubSteps(maze, playerRef.current, worldDx, worldDy, 4);
       }
 
-      // 2 finger pinch = zoom
       if (pointers.current.size === 2) {
         const [a, b] = Array.from(pointers.current.values());
-        const dist = Math.hypot(a.x - b.x, a.y - b.y);
+        const distance = Math.hypot(a.x - b.x, a.y - b.y);
+        const previousDistance = lastPinchDist.current;
+        lastPinchDist.current = distance;
 
-        const prevDist = lastPinchDist.current;
-        lastPinchDist.current = dist;
-
-        if (prevDist && prevDist > 0) {
-          const zoom = dist / prevDist;
-          const nextScale = clamp(scaleRef.current * zoom, 0.2, 3.0);
-          scaleRef.current = nextScale;
+        if (previousDistance && previousDistance > 0) {
+          scaleRef.current = clamp(scaleRef.current * (distance / previousDistance), 0.32, 1.8);
         }
       }
     };
 
-    const onPointerUpOrCancel = (e: PointerEvent) => {
-      e.preventDefault();
-      pointers.current.delete(e.pointerId);
-
-      if (pointers.current.size < 2) {
-        lastPinchDist.current = null;
-      }
+    const onPointerUpOrCancel = (event: PointerEvent) => {
+      event.preventDefault();
+      pointers.current.delete(event.pointerId);
+      if (pointers.current.size < 2) lastPinchDist.current = null;
     };
 
     canvas.addEventListener("pointerdown", onPointerDown, { passive: false });
@@ -175,118 +288,263 @@ export default function GameCanvas() {
     canvas.addEventListener("pointercancel", onPointerUpOrCancel, { passive: false });
 
     return () => {
-      canvas.removeEventListener("pointerdown", onPointerDown as any);
-      canvas.removeEventListener("pointermove", onPointerMove as any);
-      canvas.removeEventListener("pointerup", onPointerUpOrCancel as any);
-      canvas.removeEventListener("pointercancel", onPointerUpOrCancel as any);
+      canvas.removeEventListener("pointerdown", onPointerDown);
+      canvas.removeEventListener("pointermove", onPointerMove);
+      canvas.removeEventListener("pointerup", onPointerUpOrCancel);
+      canvas.removeEventListener("pointercancel", onPointerUpOrCancel);
     };
   }, [maze]);
 
-  // MAIN LOOP
+  // Main game loop.
   useEffect(() => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
 
     let lastTime = performance.now();
-    let rafId = 0;
+    let animationFrame = 0;
 
     const loop = (now: number) => {
       const dt = Math.min(0.033, (now - lastTime) / 1000);
       lastTime = now;
 
-      // keyboard movement
-      let vx = 0;
-      let vy = 0;
-      if (keys.current.left) vx -= 1;
-      if (keys.current.right) vx += 1;
-      if (keys.current.up) vy -= 1;
-      if (keys.current.down) vy += 1;
-
-      const len = Math.hypot(vx, vy);
-      if (len > 0) {
-        vx /= len;
-        vy /= len;
-
-        const dx = vx * PLAYER_SPEED * dt;
-        const dy = vy * PLAYER_SPEED * dt;
-        playerRef.current = moveWithCollision(maze, playerRef.current, dx, dy);
+      if (!dashReadyRef.current && now >= dashReadyAtRef.current) {
+        dashReadyRef.current = true;
+        setDashReady(true);
       }
 
-      // ✅ MULTI-ENEMY FLOWFIELD CHASE + AGGRO
-      {
-        const p = playerRef.current;
+      if (gameStatusRef.current === "playing") {
+        if (now - lastTimerUpdateRef.current >= 250) {
+          setElapsed(Math.floor((now - levelStartRef.current) / 1000));
+          lastTimerUpdateRef.current = now;
+        }
 
-        // player cell
-        const pc = worldToCell(p.x, p.y);
+        let vx = Number(keys.current.right) - Number(keys.current.left);
+        let vy = Number(keys.current.down) - Number(keys.current.up);
+        const length = Math.hypot(vx, vy);
 
-        // rebuild flow field ONLY if player changed cell
-        const last = lastPlayerCellRef.current;
-        if (!last || last.cx !== pc.cx || last.cy !== pc.cy) {
-          flowFieldRef.current = buildFlowField(maze, pc.cx, pc.cy);
-          lastPlayerCellRef.current = pc;
+        if (length > 0) {
+          vx /= length;
+          vy /= length;
+          const speed = PLAYER_SPEED * (now < dashUntilRef.current ? DASH_MULTIPLIER : 1);
+          playerRef.current = moveWithCollision(
+            maze,
+            playerRef.current,
+            vx * speed * dt,
+            vy * speed * dt
+          );
+        }
+
+        const player = playerRef.current;
+
+        for (const core of coresRef.current) {
+          if (!core.collected && distanceBetween(player, core) <= PLAYER_RADIUS + 26) {
+            core.collected = true;
+            coresCollectedRef.current += 1;
+            setCoresCollected(coresCollectedRef.current);
+            addScore(100);
+
+            if (coresCollectedRef.current === CORE_COUNT && exitRef.current) {
+              exitRef.current.unlocked = true;
+              setMessage("EXIT OPEN");
+              window.setTimeout(() => setMessage(""), 1600);
+            }
+          }
+        }
+
+        const shieldPickup = shieldPickupRef.current;
+        if (
+          shieldPickup &&
+          !shieldPickup.collected &&
+          distanceBetween(player, shieldPickup) <= PLAYER_RADIUS + 25
+        ) {
+          shieldPickup.collected = true;
+          shieldActiveRef.current = true;
+          setShieldActive(true);
+          addScore(75);
+          setMessage("SHIELD CHARGED");
+          window.setTimeout(() => setMessage(""), 1300);
+        }
+
+        const exit = exitRef.current;
+        if (exit?.unlocked && distanceBetween(player, exit) <= PLAYER_RADIUS + 42) {
+          completeLevel();
+        }
+
+        const playerCell = worldToCell(player.x, player.y);
+        const lastCell = lastPlayerCellRef.current;
+        if (!lastCell || lastCell.cx !== playerCell.cx || lastCell.cy !== playerCell.cy) {
+          flowFieldRef.current = buildFlowField(maze, playerCell.cx, playerCell.cy);
+          lastPlayerCellRef.current = playerCell;
         }
 
         const field = flowFieldRef.current;
-
         if (field) {
-          for (const e of enemiesRef.current) {
-            // wake enemy if close enough
-            if (!e.active) {
-              const dist = Math.hypot(p.x - e.x, p.y - e.y);
-              if (dist <= AGGRO_RADIUS) e.active = true;
-              else continue; // asleep
+          const aggroRadius = BASE_AGGRO_RADIUS + coresCollectedRef.current * CELL_SIZE * 0.75;
+          const speedBoost = 1 + coresCollectedRef.current * 0.08;
+
+          for (const enemy of enemiesRef.current) {
+            if (!enemy.active) {
+              if (distanceBetween(player, enemy) <= aggroRadius) enemy.active = true;
+              else continue;
             }
 
-            const ec = worldToCell(e.x, e.y);
+            const enemyCell = worldToCell(enemy.x, enemy.y);
+            const nextCell = nextCellFromFlow(
+              maze,
+              field,
+              enemyCell.cx,
+              enemyCell.cy
+            );
+            const sameCell =
+              enemyCell.cx === playerCell.cx && enemyCell.cy === playerCell.cy;
+            const targetX = sameCell ? player.x : (nextCell.cx + 0.5) * CELL_SIZE;
+            const targetY = sameCell ? player.y : (nextCell.cy + 0.5) * CELL_SIZE;
+            const dx = targetX - enemy.x;
+            const dy = targetY - enemy.y;
+            const distance = Math.hypot(dx, dy);
 
-            const nextCell = nextCellFromFlow(maze, field, ec.cx, ec.cy);
-
-            const sameCell = ec.cx === pc.cx && ec.cy === pc.cy;
-            const tx = sameCell ? p.x : (nextCell.cx + 0.5) * CELL_SIZE;
-            const ty = sameCell ? p.y : (nextCell.cy + 0.5) * CELL_SIZE;
-
-            const dx = tx - e.x;
-            const dy = ty - e.y;
-            const d = Math.hypot(dx, dy);
-
-            if (d > 0.001) {
-              const edx = (dx / d) * e.speed * dt;
-              const edy = (dy / d) * e.speed * dt;
-
-              const next = moveCircleWithCollision(maze, e.x, e.y, e.r, edx, edy);
-              e.x = next.x;
-              e.y = next.y;
+            if (distance > 0.001) {
+              const enemyStep = enemy.speed * speedBoost * dt;
+              const next = moveCircleWithCollision(
+                maze,
+                enemy.x,
+                enemy.y,
+                enemy.r,
+                (dx / distance) * enemyStep,
+                (dy / distance) * enemyStep
+              );
+              enemy.x = next.x;
+              enemy.y = next.y;
             }
 
-            // contact = "kill" placeholder
-            const hit = Math.hypot(p.x - e.x, p.y - e.y) <= (PLAYER_RADIUS + e.r);
-            if (hit) {
-              // For now: shove enemy away and put it back to sleep
-              const spawn = pickSpawnCell(maze, p, SPAWN_MIN_DIST);
-              e.x = (spawn.cx + 0.5) * CELL_SIZE;
-              e.y = (spawn.cy + 0.5) * CELL_SIZE;
-              e.active = false;
+            if (
+              now >= invulnerableUntilRef.current &&
+              distanceBetween(player, enemy) <= PLAYER_RADIUS + enemy.r
+            ) {
+              invulnerableUntilRef.current = now + HIT_INVULNERABILITY_MS;
+
+              if (shieldActiveRef.current) {
+                shieldActiveRef.current = false;
+                setShieldActive(false);
+                setMessage("SHIELD BROKEN");
+                window.setTimeout(() => setMessage(""), 1000);
+              } else {
+                healthRef.current -= 1;
+                setHealth(healthRef.current);
+
+                if (healthRef.current <= 0) {
+                  gameStatusRef.current = "gameover";
+                  setGameStatus("gameover");
+                  keys.current = { up: false, down: false, left: false, right: false };
+                }
+              }
+
+              const respawn = pickSpawnCell(maze, player, SPAWN_MIN_DIST);
+              enemy.x = (respawn.cx + 0.5) * CELL_SIZE;
+              enemy.y = (respawn.cy + 0.5) * CELL_SIZE;
+              enemy.active = false;
             }
           }
         }
       }
 
-      // ✅ draw now receives an array of enemies
-      draw(ctx, maze, playerRef.current, enemiesRef.current, scaleRef.current, dprRef.current);
+      draw(
+        ctx,
+        maze,
+        playerRef.current,
+        enemiesRef.current,
+        coresRef.current,
+        exitRef.current,
+        shieldPickupRef.current,
+        scaleRef.current,
+        dprRef.current,
+        {
+          dashActive: now < dashUntilRef.current,
+          playerInvulnerable: now < invulnerableUntilRef.current,
+          shieldActive: shieldActiveRef.current,
+        }
+      );
 
-      rafId = requestAnimationFrame(loop);
+      animationFrame = requestAnimationFrame(loop);
     };
 
-    rafId = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(rafId);
-  }, [maze]);
+    animationFrame = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(animationFrame);
+  }, [addScore, completeLevel, maze]);
 
-  return <canvas ref={canvasRef} />;
+  const exitOpen = coresCollected === CORE_COUNT;
+
+  return (
+    <div className={styles.gameShell}>
+      <canvas ref={canvasRef} className={styles.canvas} aria-label="Neon maze game" />
+
+      <div className={styles.hud}>
+        <div className={styles.topBar}>
+          <div className={styles.panel}>
+            <span className={styles.eyebrow}>Integrity</span>
+            <div className={`${styles.value} ${styles.hearts}`}>
+              {"♥".repeat(health)}{"♡".repeat(MAX_HEALTH - health)}
+            </div>
+          </div>
+
+          <div className={`${styles.panel} ${styles.objective}`}>
+            <span className={styles.eyebrow}>Objective</span>
+            <div className={`${styles.value} ${exitOpen ? styles.objectiveReady : ""}`}>
+              {exitOpen ? "REACH THE EXIT" : `CORES ${coresCollected}/${CORE_COUNT}`}
+            </div>
+          </div>
+
+          <div className={`${styles.panel} ${styles.scorePanel}`}>
+            <span className={styles.eyebrow}>Level {level} · {elapsed}s</span>
+            <div className={styles.value}>SCORE {score.toString().padStart(5, "0")}</div>
+          </div>
+        </div>
+
+        {message && <div className={styles.message}>{message}</div>}
+
+        <div className={styles.bottomBar}>
+          <div className={`${styles.panel} ${styles.controls}`}>
+            WASD / ARROWS TO MOVE · SHIFT / SPACE TO DASH · DRAG ON TOUCH
+            {shieldActive && " · SHIELD ACTIVE"}
+          </div>
+          <button
+            type="button"
+            className={styles.dashButton}
+            disabled={!dashReady || gameStatus !== "playing"}
+            onPointerDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              triggerDash();
+            }}
+          >
+            {dashReady ? "DASH" : "CHARGING"}
+          </button>
+        </div>
+      </div>
+
+      {gameStatus === "gameover" && (
+        <div className={styles.gameOver} role="dialog" aria-modal="true" aria-labelledby="game-over-title">
+          <div className={styles.gameOverCard}>
+            <h1 id="game-over-title">SIGNAL LOST</h1>
+            <p>You reached level {level}.</p>
+            <p>Final score: {score}</p>
+            <button type="button" className={styles.restartButton} onClick={restartGame}>
+              RESTART RUN
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
-function clamp(v: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, v));
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function distanceBetween(a: { x: number; y: number }, b: { x: number; y: number }) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
 function moveWithSubSteps(
@@ -296,39 +554,58 @@ function moveWithSubSteps(
   dy: number,
   maxStep = 2
 ) {
-  const dist = Math.hypot(dx, dy);
-  if (dist === 0) return player;
+  const distance = Math.hypot(dx, dy);
+  if (distance === 0) return player;
 
-  const steps = Math.ceil(dist / maxStep);
+  const steps = Math.ceil(distance / maxStep);
   const stepX = dx / steps;
   const stepY = dy / steps;
+  let nextPlayer = player;
 
-  let p = player;
-
-  for (let i = 0; i < steps; i++) {
-    const next = moveWithCollision(maze, p, stepX, stepY);
-    if (next.x === p.x && next.y === p.y) break;
-    p = next;
+  for (let index = 0; index < steps; index += 1) {
+    const next = moveWithCollision(maze, nextPlayer, stepX, stepY);
+    if (next.x === nextPlayer.x && next.y === nextPlayer.y) break;
+    nextPlayer = next;
   }
 
-  return p;
+  return nextPlayer;
 }
 
-// ---------- enemy spawn helpers ----------
+function spawnCores(
+  maze: Maze,
+  player: Player,
+  count: number,
+  used: Set<number>
+): Core[] {
+  return Array.from({ length: count }, () => {
+    const cell = pickSpawnCell(maze, player, CELL_SIZE * 4, used);
+    used.add(cell.cy * maze.width + cell.cx);
+    return {
+      x: (cell.cx + 0.5) * CELL_SIZE,
+      y: (cell.cy + 0.5) * CELL_SIZE,
+      collected: false,
+    };
+  });
+}
 
-function spawnEnemies(maze: Maze, player: Player, count: number): EnemyState[] {
-  const enemies: EnemyState[] = [];
-  const used = new Set<number>();
+function spawnEnemies(
+  maze: Maze,
+  player: Player,
+  count: number,
+  speed: number,
+  reserved: Set<number>
+): Enemy[] {
+  const enemies: Enemy[] = [];
+  const used = new Set(reserved);
 
-  for (let i = 0; i < count; i++) {
+  for (let index = 0; index < count; index += 1) {
     const cell = pickSpawnCell(maze, player, SPAWN_MIN_DIST, used);
     used.add(cell.cy * maze.width + cell.cx);
-
     enemies.push({
       x: (cell.cx + 0.5) * CELL_SIZE,
       y: (cell.cy + 0.5) * CELL_SIZE,
       r: ENEMY_RADIUS,
-      speed: ENEMY_SPEED,
+      speed,
       active: false,
     });
   }
@@ -339,29 +616,73 @@ function spawnEnemies(maze: Maze, player: Player, count: number): EnemyState[] {
 function pickSpawnCell(
   maze: Maze,
   player: Player,
-  minDist: number,
+  minDistance: number,
   used?: Set<number>
 ) {
-  const pcx = Math.floor(player.x / CELL_SIZE);
-  const pcy = Math.floor(player.y / CELL_SIZE);
+  const playerCellX = Math.floor(player.x / CELL_SIZE);
+  const playerCellY = Math.floor(player.y / CELL_SIZE);
 
-  for (let tries = 0; tries < 2000; tries++) {
+  for (let attempt = 0; attempt < 3000; attempt += 1) {
     const cx = Math.floor(Math.random() * maze.width);
     const cy = Math.floor(Math.random() * maze.height);
-
     const index = cy * maze.width + cx;
-    if (used?.has(index)) continue;
-
-    if (cx === pcx && cy === pcy) continue;
+    if (used?.has(index) || (cx === playerCellX && cy === playerCellY)) continue;
 
     const x = (cx + 0.5) * CELL_SIZE;
     const y = (cy + 0.5) * CELL_SIZE;
+    if (Math.hypot(x - player.x, y - player.y) >= minDistance) return { cx, cy };
+  }
 
-    if (Math.hypot(x - player.x, y - player.y) >= minDist) {
-      return { cx, cy };
+  for (let cy = maze.height - 1; cy >= 0; cy -= 1) {
+    for (let cx = maze.width - 1; cx >= 0; cx -= 1) {
+      if (!used?.has(cy * maze.width + cx)) return { cx, cy };
     }
   }
 
-  // fallback
-  return { cx: Math.max(0, Math.min(maze.width - 1, pcx + 5)), cy: pcy };
+  return { cx: maze.width - 1, cy: maze.height - 1 };
+}
+
+function findFarthestCell(maze: Maze, startX: number, startY: number) {
+  const distances = new Array(maze.width * maze.height).fill(-1);
+  const queue: Array<{ cx: number; cy: number }> = [{ cx: startX, cy: startY }];
+  distances[startY * maze.width + startX] = 0;
+  let head = 0;
+  let farthest = queue[0];
+
+  while (head < queue.length) {
+    const current = queue[head];
+    head += 1;
+    const currentIndex = current.cy * maze.width + current.cx;
+    const cell = maze.cells[currentIndex];
+    const neighbors = [
+      { cx: current.cx, cy: current.cy - 1, blocked: cell.walls.N },
+      { cx: current.cx + 1, cy: current.cy, blocked: cell.walls.E },
+      { cx: current.cx, cy: current.cy + 1, blocked: cell.walls.S },
+      { cx: current.cx - 1, cy: current.cy, blocked: cell.walls.W },
+    ];
+
+    for (const neighbor of neighbors) {
+      if (
+        neighbor.blocked ||
+        neighbor.cx < 0 ||
+        neighbor.cy < 0 ||
+        neighbor.cx >= maze.width ||
+        neighbor.cy >= maze.height
+      ) {
+        continue;
+      }
+
+      const neighborIndex = neighbor.cy * maze.width + neighbor.cx;
+      if (distances[neighborIndex] !== -1) continue;
+      distances[neighborIndex] = distances[currentIndex] + 1;
+      queue.push({ cx: neighbor.cx, cy: neighbor.cy });
+
+      const farthestIndex = farthest.cy * maze.width + farthest.cx;
+      if (distances[neighborIndex] > distances[farthestIndex]) {
+        farthest = { cx: neighbor.cx, cy: neighbor.cy };
+      }
+    }
+  }
+
+  return farthest;
 }

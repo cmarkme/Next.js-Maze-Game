@@ -1,0 +1,184 @@
+.gameShell {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #020504;
+  color: #eafff7;
+  font-family: "Courier New", monospace;
+}
+
+.canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: #020504;
+}
+
+.hud {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  padding: clamp(12px, 2.4vw, 24px);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.topBar,
+.bottomBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.panel {
+  border: 1px solid rgb(39 255 171 / 45%);
+  background: rgb(0 13 9 / 78%);
+  box-shadow: 0 0 18px rgb(0 255 157 / 12%);
+  padding: 9px 12px;
+  backdrop-filter: blur(6px);
+}
+
+.eyebrow {
+  display: block;
+  margin-bottom: 4px;
+  color: #55ffbd;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.value {
+  font-size: clamp(13px, 1.6vw, 17px);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.hearts {
+  color: #ff4c6a;
+  letter-spacing: 0.15em;
+  text-shadow: 0 0 10px rgb(255 40 84 / 70%);
+}
+
+.objective {
+  text-align: center;
+}
+
+.objectiveReady {
+  color: #5fffe2;
+  text-shadow: 0 0 12px rgb(56 255 219 / 70%);
+}
+
+.message {
+  position: absolute;
+  left: 50%;
+  top: 28%;
+  transform: translate(-50%, -50%);
+  color: #83ffd0;
+  font-size: clamp(18px, 3vw, 34px);
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-align: center;
+  text-shadow: 0 0 18px rgb(0 255 157 / 75%);
+  animation: fadeMessage 1.8s ease forwards;
+}
+
+.controls {
+  color: rgb(222 255 244 / 66%);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
+
+.dashButton {
+  pointer-events: auto;
+  min-width: 92px;
+  min-height: 48px;
+  border: 1px solid #58ffd1;
+  border-radius: 3px;
+  background: rgb(5 39 29 / 88%);
+  color: #dffff4;
+  font: 700 13px/1 "Courier New", monospace;
+  letter-spacing: 0.12em;
+  cursor: pointer;
+  box-shadow: 0 0 16px rgb(0 255 157 / 22%);
+}
+
+.dashButton:disabled {
+  border-color: #49635b;
+  color: #718a82;
+  cursor: default;
+  box-shadow: none;
+}
+
+.gameOver {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(0 0 0 / 72%);
+  backdrop-filter: blur(5px);
+}
+
+.gameOverCard {
+  width: min(420px, 100%);
+  border: 1px solid #ff3f65;
+  background: rgb(18 2 7 / 94%);
+  box-shadow: 0 0 42px rgb(255 32 78 / 25%);
+  padding: 32px;
+  text-align: center;
+}
+
+.gameOverCard h1 {
+  margin: 0 0 12px;
+  color: #ff5876;
+  font-size: clamp(28px, 6vw, 48px);
+  letter-spacing: 0.12em;
+}
+
+.gameOverCard p {
+  margin: 8px 0;
+  color: #ffdce3;
+}
+
+.restartButton {
+  margin-top: 22px;
+  border: 1px solid #58ffd1;
+  background: #073326;
+  color: #eafff7;
+  padding: 13px 24px;
+  font: 700 14px/1 "Courier New", monospace;
+  letter-spacing: 0.12em;
+  cursor: pointer;
+}
+
+@keyframes fadeMessage {
+  0%, 55% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@media (max-width: 640px) {
+  .hud {
+    padding: 10px;
+  }
+
+  .topBar {
+    align-items: flex-start;
+  }
+
+  .panel {
+    padding: 7px 9px;
+  }
+
+  .scorePanel {
+    display: none;
+  }
+
+  .controls {
+    max-width: 180px;
+  }
+}

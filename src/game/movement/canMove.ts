@@ -1,4 +1,4 @@
-import { Maze, Player, Dir, Cell } from "@/game/types";
+import { Maze, Player, Cell } from "@/game/types";
 import { CELL_SIZE, WALL_THICKNESS, PLAYER_RADIUS } from "@/game/config";
 
 type Rect = { x: number; y: number; w: number; h: number };
@@ -110,4 +110,3 @@ export function moveWithCollision(
   );
   return { x: res.x, y: res.y };
 }
-

@@ -21,9 +21,26 @@ export type Player = {
 export type Enemy = {
   x: number; // world coords (same as player)
   y: number;
-  r: 50; // radius in world units
+  r: number; // radius in world units
   speed: number; // world units per second
+  active: boolean;
 };
 
+export type Core = {
+  x: number;
+  y: number;
+  collected: boolean;
+};
 
+export type Exit = {
+  x: number;
+  y: number;
+  unlocked: boolean;
+};
+
+export type ShieldPickup = {
+  x: number;
+  y: number;
+  collected: boolean;
+};
 
