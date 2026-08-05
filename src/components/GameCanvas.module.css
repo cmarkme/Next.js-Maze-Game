@@ -52,9 +52,18 @@
 }
 
 .value {
-  font-size: clamp(13px, 1.6vw, 17px);
+  font-size: 16px;
   font-weight: 700;
   letter-spacing: 0.05em;
+}
+
+.compactStat {
+  display: none;
+  min-width: 34px;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
 }
 
 .hearts {
@@ -92,6 +101,48 @@
   letter-spacing: 0.08em;
 }
 
+.bottomLeft {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.zoomControls {
+  display: flex;
+  pointer-events: auto;
+  border: 1px solid rgb(39 255 171 / 45%);
+  background: rgb(0 13 9 / 86%);
+  box-shadow: 0 0 18px rgb(0 255 157 / 12%);
+  backdrop-filter: blur(6px);
+}
+
+.zoomControls button {
+  width: 42px;
+  height: 42px;
+  border: 0;
+  border-right: 1px solid rgb(39 255 171 / 28%);
+  background: transparent;
+  color: #dffff4;
+  font: 700 20px/1 "Courier New", monospace;
+  cursor: pointer;
+}
+
+.zoomControls button:last-child {
+  border-right: 0;
+}
+
+.zoomControls button:hover,
+.zoomControls button:focus-visible {
+  background: rgb(25 105 77 / 45%);
+  outline: none;
+}
+
+.zoomControls .zoomReadout {
+  width: 58px;
+  color: #69ffc8;
+  font-size: 11px;
+}
+
 .dashButton {
   pointer-events: auto;
   min-width: 92px;
@@ -111,6 +162,22 @@
   color: #718a82;
   cursor: default;
   box-shadow: none;
+}
+
+.cameraCompact .fullStat {
+  display: none;
+}
+
+.cameraCompact .compactStat {
+  display: block;
+}
+
+.cameraCompact .panel {
+  padding: 7px 9px;
+}
+
+.cameraCompact .controls {
+  display: none;
 }
 
 .gameOver {
@@ -161,7 +228,7 @@
   100% { opacity: 0; }
 }
 
-@media (max-width: 640px) {
+@media (max-width: 720px), (max-height: 520px) {
   .hud {
     padding: 10px;
   }
@@ -174,11 +241,34 @@
     padding: 7px 9px;
   }
 
-  .scorePanel {
+  .fullStat {
     display: none;
   }
 
+  .compactStat {
+    display: block;
+  }
+
   .controls {
-    max-width: 180px;
+    display: none;
+  }
+
+  .topBar,
+  .bottomBar {
+    gap: 6px;
+  }
+
+  .zoomControls button {
+    width: 38px;
+    height: 40px;
+  }
+
+  .zoomControls .zoomReadout {
+    width: 52px;
+  }
+
+  .dashButton {
+    min-width: 82px;
+    min-height: 42px;
   }
 }

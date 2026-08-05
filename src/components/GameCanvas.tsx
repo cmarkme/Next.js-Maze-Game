@@ -39,6 +39,11 @@ const DASH_DURATION_MS = 260;
 const DASH_COOLDOWN_MS = 1600;
 const DASH_MULTIPLIER = 2.4;
 const HIT_INVULNERABILITY_MS = 1100;
+const DEFAULT_CAMERA_SCALE = 0.72;
+const MIN_CAMERA_SCALE = 0.32;
+const MAX_CAMERA_SCALE = 1.8;
+const CAMERA_ZOOM_STEP = 1.15;
+const COMPACT_HUD_SCALE = 1.05;
 
 export default function GameCanvas() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -47,7 +52,7 @@ export default function GameCanvas() {
   const keys = useRef<Keys>({ up: false, down: false, left: false, right: false });
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const lastPinchDist = useRef<number | null>(null);
-  const scaleRef = useRef(0.72);
+  const scaleRef = useRef(DEFAULT_CAMERA_SCALE);
   const dprRef = useRef(1);
 
   const [maze, setMaze] = useState<Maze>(() => generateMaze(MAZE_SIZE, MAZE_SIZE));
@@ -79,10 +84,22 @@ export default function GameCanvas() {
   const gameStatusRef = useRef<GameStatus>("playing");
   const advancingRef = useRef(false);
   const [message, setMessage] = useState("FIND THE ENERGY CORES");
+  const [zoomPercent, setZoomPercent] = useState(
+    Math.round(DEFAULT_CAMERA_SCALE * 100)
+  );
 
   const addScore = useCallback((amount: number) => {
     scoreRef.current += amount;
     setScore(scoreRef.current);
+  }, []);
+
+  const setCameraScale = useCallback((nextScale: number) => {
+    const next = clamp(nextScale, MIN_CAMERA_SCALE, MAX_CAMERA_SCALE);
+    scaleRef.current = next;
+    const nextPercent = Math.round(next * 100);
+    setZoomPercent((current) =>
+      current === nextPercent ? current : nextPercent
+    );
   }, []);
 
   const triggerDash = useCallback(() => {
@@ -176,7 +193,6 @@ export default function GameCanvas() {
     dashUntilRef.current = 0;
     dashReadyAtRef.current = 0;
     dashReadyRef.current = true;
-    scaleRef.current = 0.72;
     flowFieldRef.current = null;
     lastPlayerCellRef.current = null;
     advancingRef.current = false;
@@ -211,6 +227,25 @@ export default function GameCanvas() {
   useEffect(() => {
     const onDown = (event: KeyboardEvent) => {
       const key = event.key.toLowerCase();
+
+      if (event.ctrlKey || event.metaKey) {
+        if (key === "+" || key === "=" || event.code === "NumpadAdd") {
+          event.preventDefault();
+          setCameraScale(scaleRef.current * CAMERA_ZOOM_STEP);
+          return;
+        }
+        if (key === "-" || key === "_" || event.code === "NumpadSubtract") {
+          event.preventDefault();
+          setCameraScale(scaleRef.current / CAMERA_ZOOM_STEP);
+          return;
+        }
+        if (key === "0" || event.code === "Numpad0") {
+          event.preventDefault();
+          setCameraScale(DEFAULT_CAMERA_SCALE);
+          return;
+        }
+      }
+
       if (["arrowup", "arrowdown", "arrowleft", "arrowright", " "].includes(key)) {
         event.preventDefault();
       }
@@ -229,13 +264,13 @@ export default function GameCanvas() {
       if (key === "arrowright" || key === "d") keys.current.right = false;
     };
 
-    window.addEventListener("keydown", onDown);
+    window.addEventListener("keydown", onDown, true);
     window.addEventListener("keyup", onUp);
     return () => {
-      window.removeEventListener("keydown", onDown);
+      window.removeEventListener("keydown", onDown, true);
       window.removeEventListener("keyup", onUp);
     };
-  }, [triggerDash]);
+  }, [setCameraScale, triggerDash]);
 
   // One-finger movement and two-finger zoom for touch screens.
   useEffect(() => {
@@ -246,7 +281,12 @@ export default function GameCanvas() {
       event.preventDefault();
       canvas.setPointerCapture(event.pointerId);
       pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
-      if (pointers.current.size < 2) lastPinchDist.current = null;
+      if (pointers.current.size === 2) {
+        const [a, b] = Array.from(pointers.current.values());
+        lastPinchDist.current = Math.hypot(a.x - b.x, a.y - b.y);
+      } else {
+        lastPinchDist.current = null;
+      }
     };
 
     const onPointerMove = (event: PointerEvent) => {
@@ -271,9 +311,16 @@ export default function GameCanvas() {
         lastPinchDist.current = distance;
 
         if (previousDistance && previousDistance > 0) {
-          scaleRef.current = clamp(scaleRef.current * (distance / previousDistance), 0.32, 1.8);
+          setCameraScale(scaleRef.current * (distance / previousDistance));
         }
       }
+    };
+
+    const onWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey) return;
+      event.preventDefault();
+      const zoomFactor = Math.exp(-event.deltaY * 0.002);
+      setCameraScale(scaleRef.current * zoomFactor);
     };
 
     const onPointerUpOrCancel = (event: PointerEvent) => {
@@ -286,14 +333,16 @@ export default function GameCanvas() {
     canvas.addEventListener("pointermove", onPointerMove, { passive: false });
     canvas.addEventListener("pointerup", onPointerUpOrCancel, { passive: false });
     canvas.addEventListener("pointercancel", onPointerUpOrCancel, { passive: false });
+    canvas.addEventListener("wheel", onWheel, { passive: false });
 
     return () => {
       canvas.removeEventListener("pointerdown", onPointerDown);
       canvas.removeEventListener("pointermove", onPointerMove);
       canvas.removeEventListener("pointerup", onPointerUpOrCancel);
       canvas.removeEventListener("pointercancel", onPointerUpOrCancel);
+      canvas.removeEventListener("wheel", onWheel);
     };
-  }, [maze]);
+  }, [maze, setCameraScale]);
 
   // Main game loop.
   useEffect(() => {
@@ -474,39 +523,83 @@ export default function GameCanvas() {
   }, [addScore, completeLevel, maze]);
 
   const exitOpen = coresCollected === CORE_COUNT;
+  const compactHud = zoomPercent >= Math.round(COMPACT_HUD_SCALE * 100);
 
   return (
     <div className={styles.gameShell}>
       <canvas ref={canvasRef} className={styles.canvas} aria-label="Neon maze game" />
 
-      <div className={styles.hud}>
+      <div className={`${styles.hud} ${compactHud ? styles.cameraCompact : ""}`}>
         <div className={styles.topBar}>
-          <div className={styles.panel}>
-            <span className={styles.eyebrow}>Integrity</span>
-            <div className={`${styles.value} ${styles.hearts}`}>
-              {"♥".repeat(health)}{"♡".repeat(MAX_HEALTH - health)}
+          <div className={styles.panel} aria-label={`Health ${health} of ${MAX_HEALTH}`}>
+            <div className={styles.fullStat}>
+              <span className={styles.eyebrow}>Integrity</span>
+              <div className={`${styles.value} ${styles.hearts}`}>
+                {"♥".repeat(health)}{"♡".repeat(MAX_HEALTH - health)}
+              </div>
+            </div>
+            <div className={`${styles.compactStat} ${styles.hearts}`}>♥ {health}</div>
+          </div>
+
+          <div
+            className={`${styles.panel} ${styles.objective}`}
+            aria-label={exitOpen ? "Exit open" : `${coresCollected} of ${CORE_COUNT} cores collected`}
+          >
+            <div className={styles.fullStat}>
+              <span className={styles.eyebrow}>Objective</span>
+              <div className={`${styles.value} ${exitOpen ? styles.objectiveReady : ""}`}>
+                {exitOpen ? "REACH THE EXIT" : `CORES ${coresCollected}/${CORE_COUNT}`}
+              </div>
+            </div>
+            <div className={`${styles.compactStat} ${exitOpen ? styles.objectiveReady : ""}`}>
+              {exitOpen ? "→" : `◆ ${coresCollected}/${CORE_COUNT}`}
             </div>
           </div>
 
-          <div className={`${styles.panel} ${styles.objective}`}>
-            <span className={styles.eyebrow}>Objective</span>
-            <div className={`${styles.value} ${exitOpen ? styles.objectiveReady : ""}`}>
-              {exitOpen ? "REACH THE EXIT" : `CORES ${coresCollected}/${CORE_COUNT}`}
+          <div
+            className={`${styles.panel} ${styles.scorePanel}`}
+            aria-label={`Level ${level}, ${elapsed} seconds, score ${score}`}
+          >
+            <div className={styles.fullStat}>
+              <span className={styles.eyebrow}>Level {level} · {elapsed}s</span>
+              <div className={styles.value}>SCORE {score.toString().padStart(5, "0")}</div>
             </div>
-          </div>
-
-          <div className={`${styles.panel} ${styles.scorePanel}`}>
-            <span className={styles.eyebrow}>Level {level} · {elapsed}s</span>
-            <div className={styles.value}>SCORE {score.toString().padStart(5, "0")}</div>
+            <div className={styles.compactStat}>L{level} · {score.toString().padStart(4, "0")}</div>
           </div>
         </div>
 
         {message && <div className={styles.message}>{message}</div>}
 
         <div className={styles.bottomBar}>
-          <div className={`${styles.panel} ${styles.controls}`}>
-            WASD / ARROWS TO MOVE · SHIFT / SPACE TO DASH · DRAG ON TOUCH
-            {shieldActive && " · SHIELD ACTIVE"}
+          <div className={styles.bottomLeft}>
+            <div className={`${styles.panel} ${styles.controls}`}>
+              WASD / ARROWS TO MOVE · SHIFT / SPACE TO DASH · CTRL +/- TO ZOOM · PINCH ON TOUCH
+              {shieldActive && " · SHIELD ACTIVE"}
+            </div>
+            <div className={styles.zoomControls} role="group" aria-label="Camera zoom controls">
+              <button
+                type="button"
+                aria-label="Zoom out"
+                onClick={() => setCameraScale(scaleRef.current / CAMERA_ZOOM_STEP)}
+              >
+                −
+              </button>
+              <button
+                type="button"
+                className={styles.zoomReadout}
+                aria-label={`Reset camera zoom. Current zoom ${zoomPercent} percent`}
+                onClick={() => setCameraScale(DEFAULT_CAMERA_SCALE)}
+              >
+                {zoomPercent}%
+              </button>
+              <button
+                type="button"
+                aria-label="Zoom in"
+                onClick={() => setCameraScale(scaleRef.current * CAMERA_ZOOM_STEP)}
+              >
+                +
+              </button>
+            </div>
           </div>
           <button
             type="button"
